@@ -1,0 +1,214 @@
+---
+title: "Assignment Machine Learning"
+author: "ThierryFauret"
+date: "26 avril 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE, warning=F,message=F}
+knitr::opts_chunk$set(echo = TRUE)
+
+```
+
+## 1. Executive Summary
+
+This analyze treats data for Human Activity Recognition (HAR).
+We have a dataset with 5 classes (sitting-down, standing-up, standing, walking, and sitting).
+Our goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants and build a model predicting the class from this recorded data.
+
+We have tested 4 methodologies (lda, rpart, unsupervised model, random forest).
+The best fiiting has been obtained with the random forest model.
+With this model, the prediction on the 20 data of the testing data are :
+[1] B A B A A E D B A A B C B A E E A B B B
+
+
+## 2. Context
+
+This analyze treats data for Human Activity Recognition (HAR).
+We have a dataset with 5 classes (sitting-down, standing-up, standing, walking, and sitting).
+Our goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants and build a model predicting the class from this recorded data.
+
+For more information, see the publication:
+
+Ugulino, W.; Cardador, D.; Vega, K.; Velloso, E.; Milidiu, R.; Fuks, H. Wearable Computing: Accelerometers' Data Classification of Body Postures and Movements. Proceedings of 21st Brazilian Symposium on Artificial Intelligence. Advances in Artificial Intelligence - SBIA 2012. In: Lecture Notes in Computer Science. , pp. 52-61. Curitiba, PR: Springer Berlin / Heidelberg, 2012. ISBN 978-3-642-34458-9. DOI: 10.1007/978-3-642-34459-6_6. 
+Cited by 2 (Google Scholar)
+
+Read more: http://groupware.les.inf.puc-rio.br/har#ixzz4fNsaOa5R
+
+
+
+
+## 3. Getting and cleaning data / Exploratory data analysis
+Two files are available:
+pml-training.csv : training data
+pml-testing.csv ; testing data on which will be applied a model in order to give the predictions
+
+```{r warning=F,message=F,ECHO=FALSE}
+library(caret)
+library(rattle)
+library(ggplot2)
+library(GGally)
+library(dplyr)
+library(RANN)
+
+training<-read.csv("pml-training.csv",sep=",")
+testing<-read.csv("pml-testing.csv",sep=",")
+
+nb<-dim(training)
+
+```
+By an exploratory analysis of the data base, we can notice that several parameters contains a high percentage of NA.
+We propose two methods to treat this :
+ - use an algorithm to impute data
+ - remove this parameters
+
+Firstly we will fill the missing data. knnImpute will be used to fill the missing data for training data set.
+For testing data set, the median values calculated with the training data have been put to replace the missing data:
+
+```{r warning=F,message=F,ECHO=FALSE}
+for (i in 8:nb[2]-1) {
+  training[,i]<-as.numeric(training[,i])
+}
+
+
+
+for (i in 8:nb[2]-1) {
+  testing[,i]<-as.numeric(testing[,i])
+}
+
+preProcValues <- preProcess(training[,8:nb[2]], method = c("knnImpute"))
+training_imp <- predict(preProcValues, training[,8:nb[2]])
+
+
+for (i in 8:nb[2]-1){
+  if (is.na(testing[1,i])){
+    testing[1:20,i]<-rep(median(training_imp[,i-7]),20)
+  }else{
+    testing[,i]<-scale(testing[,i])
+  }
+}
+
+
+```
+
+
+## 4. Models fitting
+# rpart model
+
+```{r warning=F,message=F,ECHO=TRUE}
+mod.rpart<-train(classe~.,data=training_imp,method="rpart")
+print(confusionMatrix(training_imp$classe,predict(mod.rpart,training_imp)))
+fancyRpartPlot(mod.rpart$finalModel)
+```
+
+This model is not satisfactory because it does not predict any classe D (there is 3216 cases of the classe D in the training data set).
+
+# Linear discriminant model
+
+Secondly the LDA model is tested:
+
+```{r warning=F,message=F,ECHO=TRUE}
+mod.lda<-train(classe~.,data=training_imp,method="lda",preProcess="pca")
+print(confusionMatrix(training_imp$classe,predict(mod.lda,training_imp)))
+
+```
+The accuracy is equals to 52,83%. It is better than rpart model but it is not very good.
+
+Random forest has been tested but I meet memory problem with this data. The option choosen had been to remove from the data bae the parameters with an high percentage of NA value. It is treated after.
+
+# New Data treatment
+```{r warning=F,message=F,ECHO=TRUE}
+training_col<-matrix(nrow=19622)
+training_col<-as.data.frame(training_col)
+
+
+k<-0
+for (i in 1:152){
+  x<-training[,7+i]
+  if(sum(is.na(x))/length(x)<0.75){
+    k<-k+1
+    training_col[,k]<-training[,7+i]
+    colnames(training_col)[k]<-colnames(training)[7+i]
+  }
+}
+
+quantile(abs(cor(training_col)),probs=c(0.85,0.90,0.95))
+# the results confirms that some parameters are correlated
+
+training_col[,k+1]<-training[,160]
+colnames(training_col)[k+1]<-colnames(training)[160]
+
+```
+
+# Unsupervised model
+We try to fit an unsupervised model
+
+```{r warning=F,message=F,ECHO=TRUE}
+titi<-kmeans(subset(training_col,select=-classe),centers=5)
+training_col$clusters<-as.factor(titi$cluster)
+table(training_col$classe,training_col$clusters)
+```
+
+The results are not good. The five cluster are significantly different from the classes.
+Consequently we do not analyse more the possibility.
+
+# Random Forest model
+Now we calculate a random forest model.
+```{r warning=F,message=F,ECHO=TRUE}
+
+set.seed(62433)
+training_col<-subset(training_col,select=-clusters)
+mod.rf<-train(classe~.,data=training_col,method="rf", allowParallel = TRUE)
+print(confusionMatrix(training_col$classe,predict(mod.rf,training_col)))
+```
+On the training data, the data are very well fitted.
+
+The significant parameters are :
+```{r warning=F,message=F,ECHO=TRUE}
+varImp(mod.rf, useModel=TRUE)
+
+```
+
+Now we will calculate the prediction based on the testing data base. For that, we have to treat the testing data base (fill the missing data and remowe unuseful parameters).
+```{r warning=F,message=F,ECHO=TRUE}
+testing<-read.csv("pml-testing.csv",sep=",")
+
+nb<-dim(training)
+
+for (i in 8:nb[2]-1) {
+  testing[,i]<-as.numeric(testing[,i])
+}
+
+testing_col<-matrix(nrow=20)
+testing_col<-as.data.frame(testing_col)
+
+k<-0
+for (i in 1:152){
+  x<-training[,7+i]
+  if(sum(is.na(x))/length(x)<0.75){
+    k<-k+1
+    testing_col[,k]<-testing[,7+i]
+    colnames(testing_col)[k]<-colnames(testing)[7+i]
+  }
+}
+
+
+for (i in 1:85){
+  if (is.na(testing_col[1,i])){
+    testing_col[1:20,i]<-rep(median(training_col[,i]),20)
+  }
+}
+
+print(predict(mod.rf,newdata=testing_col))
+
+```
+
+
+
+## 5. Conclusion
+We have tested 4 methodologies (lda, rpart, unsupervised model, random forest).
+The best fiiting has been obtained with the random forest model.
+With this model, the prediction on the 20 data of the testing data are :
+predict(mod.rf,newdata=testing_col)
+[1] B A B A A E D B A A B C B A E E A B B B
+
